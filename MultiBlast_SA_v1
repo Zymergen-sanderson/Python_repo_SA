@@ -1,0 +1,74 @@
+# Perform MultiBlast and Find Shared Contigs
+# __Objective__ : The objective of this notebook is to enable blasting multiple sequences which are preseumed to co-locate in a biosynthetig gene cluster (BSG) and then find contigs which intersect multiple blast results, demonstrating a BSG is likely to exist in that cluster, and improve confidence these genes perform the desired activity, enabling their use in HMM building and gene diversity searches or directly in pathway design.
+# __Context:__ Many of the pathways we desire to investigate within ZED exist within biosynthetic gene clusters.  While tools like Antismash and others exist for the investigation of BSG's some limitations arise (List them?).  
+# In select cases, BSG's can be discovered/explored by looking for contigs that contain a number of desired functionalities in close proximity.  When this occurs, we have increased confidence that these genes work together within that cluster, and thus have the desired activity, versus genes which are unclustered and may perform similar, but distinct, activities.
+# __Steps__
+#    1. Load necessary dependencies
+#    2. Load the blast query file and make the API call to NCBI
+#    3. Parse the results from blast
+# __Notes__
+#    Much of the base code was taken from this tutorial to enable access to NCBI: https://www.tutorialspoint.com/biopython/biopython_overview_of_blast.htm
+#    Additionally; the docs on the Blast.Record provided the necessary information to be able to pull 
+#    https://biopython.org/DIST/docs/api/Bio.Blast.Record-pysrc.html
+
+# 1. Import necessary dependencies
+
+# Leveraging biopython here as much as possible as they have pre-built wrappers for making these calls
+from Bio.Blast import NCBIWWW  # Make the API request
+from Bio.Blast import NCBIXML  # Parse the NCBI XML request body
+
+# Import pandas for data manipulation
+import pandas as pd
+
+# 2. Load the Query File and Run the Blast
+
+# Load the fasta file containing anchor sequences loaded into the current directory
+sequence_data = open("sequence.fasta").read()
+# Inspect for good measure
+print(sequence_data)
+
+# Perform the blast (This can take a while)
+result_handle = NCBIWWW.qblast("tblastx", "nt", sequence_data) 
+
+# Save the results locally as an intermediate step as you can only read once using this function
+with open('results.xml', 'w') as save_file:
+    blast_results = result_handle.read() 
+    save_file.write(blast_results)
+    
+# 3. Parse The Results From Blast
+
+E_VALUE_THRESH = 1e-5 
+for i, record in enumerate(NCBIXML.parse(open("results.xml"))): 
+     if record.alignments: 
+        query_name = record.query.split(" ")[0]
+        # Clear lists to hold info
+        desc_dict_list = []
+        align_dict_list = []
+        # QUERY SEQUENCE IS KEY BECAUSE THESE ARE SUB TO QUERY SEQ's
+        # Parse relevant information from the description (bit score and e value for each hit)
+        for description in record.descriptions:
+            if description.e < E_VALUE_THRESH: 
+                desc_dict_list.append({query_name + "_e_value":description.e,query_name + "_bit_score":description.bits,"title":description.title[:100].split("|")[4],"accession_key":description.title[:100].split("|")[3]})
+                # How do I track which query it goes to
+        # Parse relevant information from the alignments (namely start location on the contig  so we can use genomic context later)
+        for align in record.alignments: 
+            for hsp in align.hsps: 
+                if hsp.expect < E_VALUE_THRESH: 
+                    align_dict_list.append({query_name + "_subject_start":hsp.sbjct_start,query_name + "_length":hsp.align_length,"title":align.title[:100].split("|")[4]})
+        # if not the first sequence then merge the new pandas dataframe with the old one in order to create a master dataframe
+        if i == 0:
+            # Create pandas dataframe from information
+            df_blast_results = pd.merge(pd.DataFrame(desc_dict_list), pd.DataFrame(align_dict_list), on= "title",
+                     how =  'left').drop_duplicates(subset ="title", keep = 'first') 
+        else:
+            # Create pandas dataframe from information
+            df_temp_results = pd.merge(pd.DataFrame(desc_dict_list), pd.DataFrame(align_dict_list), on="title",
+                     how =  'left').drop_duplicates(subset ="title", keep = 'first') 
+            df_blast_results = pd.merge(df_blast_results, df_temp_results, on="title",how =  'outer')
+# LATER, IT WOULD BE GOOD TO PULL 10K OF SEQUENCES SURROUNDING, PULL PROTEINS FROM IT, AND THEN ALL-VS-ALL BLAST TO GROUP INTO SIMILAR ACTIVITIES/FAMILIES
+
+# Check the dataframe first then sort
+df_blast_results
+
+# Sort such that any NaN goes to the bottom, sort by e-value
+df_blast_results.sort_values(by=[query_name + "_e_value"])
