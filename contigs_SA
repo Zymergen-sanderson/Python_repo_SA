@@ -1,5 +1,0 @@
-# Objectives:
-# 1. take a BLAST csv and pull into a table
-# 2. find contigs that align to gene clusters
-# 3. join by contigs 
-# 4. sort by columns filled
